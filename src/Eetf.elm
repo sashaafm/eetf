@@ -1,23 +1,34 @@
 module Eetf exposing
-  ( Term
+  ( Term(..)
+  , Mfa
+  , Pairs
+  , PidProperties
+  , PortProperties
+  , ReferenceProperties
+  , NewReferenceProperties
   , decode
+  , fromBytes
   )
 
 import Bytes
-import Bytes.Decode as D
+import Bytes.Decode exposing (..)
+import Dict exposing (Dict)
 
 type Term
   = Integer Int
   | FloatingPoint Float
   | Atom String
-  | Pid (Id, Serial, Creation)
+  | Pid PidProperties
+  | Port PortProperties
+  | Reference ReferenceProperties
+  | NewReference NewReferenceProperties
   | Tuple Elements
   | Map Pairs
   | Nil
-  | CharList String -- String represented by list of bytes (ints in 0-255 range)
-  | ProperList Elements -- TODO: FINISH
-  -- | ImproperList Elements Tail -- TODO: Implement
+  | ProperList Elements
+  | ImproperList Elements Tail
   | Binary Bytes.Bytes
+  | Export Mfa
 
 type Version = Version Int
 type Sign = Positive | Negative
@@ -25,155 +36,489 @@ type alias Id = Int
 type alias Serial = Int
 type alias Creation = Int
 type alias Node = String
-type alias Arity = Int
 type alias Tail = Term
 type alias Elements = List Term
-type alias Pairs = List (Term, Term)
+type alias Module = String
+type alias Function = String
+type alias Arity = Int
+type alias Index = Int
+type alias OldIndex = Index
+type alias Uniq = Bytes.Bytes
+type alias OldUniq = Int
+type alias FreeVars = List Term
+type alias Pairs = Dict String Term
+type alias Mfa =
+  { module_ : Module
+  , function : Function
+  , arity : Arity
+  }
+type alias ReferenceProperties =
+  { node:  Node
+  , id : Id
+  , creation : Creation
+  }
+type alias NewReferenceProperties =
+  { node:  Node
+  , creation : Creation
+  , ids : List Id
+  }
+type alias PortProperties =
+  { node:  Node
+  , id : Id
+  , creation : Creation
+  }
+type alias PidProperties =
+  { node : Node
+  , id : Id
+  , serial : Serial
+  , creation : Creation
+  }
+type alias NewFunProperties =
+  { module_ : Module
+  , arity : Arity
+  , pid : PidProperties
+  , freeVars : FreeVars
+  , index : Index
+  , uniq : Uniq
+  , oldIndex : OldIndex
+  , oldUniq : OldUniq
+  }
 type Tag
-  = SmallIntegerExt Int
-  | IntegerExt Int
-  | NewFloatExt Float
-  | AtomExt String -- (DEPRECATED) Needs latin-1 string decoder instead of UTF-8
-  | SmallAtomExt String -- (DEPRECATED) Needs latin-1 string decoder instead of UTF-8
-  | AtomUtf8Ext String
-  | SmallAtomUtf8Ext String
-  | PidExt Node Id Serial Creation
-  | NewPidExt Node Id Serial Creation
-  | SmallTupleExt Elements -- Unlike Erlang it's hard or impossible to have a generic tuple type
-  | LargeTupleExt Elements
-  | MapExt Pairs
-  | NilExt
-  | StringExt String
-  | ListExt Elements -- Unlike Erlang lists cannot have mixed types
-  | BinaryExt Bytes.Bytes
-  | SmallBigExt Int
-  | LargeBigExt Int
+  = SmallIntegerExt Int -- DONE
+  | IntegerExt Int -- DONE
+  | FloatExt Float -- DONE
+  | PortExt PortProperties -- DONE
+  | NewPortExt PortProperties -- DONE
+  | PidExt PidProperties -- DONE
+  | NewPidExt PidProperties -- DONE
+  | SmallTupleExt Elements -- DONE (Unlike Erlang it's hard or impossible to have a generic tuple type)
+  | LargeTupleExt Elements -- DONE
+  | MapExt Pairs -- DONE
+  | NilExt -- DONE
+  | StringExt Elements -- DONE
+  | ListExt Elements -- DONE (Unlike Erlang lists cannot have mixed types)
+  | BinaryExt Bytes.Bytes -- DONE
+  | SmallBigExt Int -- DONE
+  | LargeBigExt Int -- DONE
+  | ReferenceExt ReferenceProperties -- DONE
+  | NewReferenceExt NewReferenceProperties -- DONE
+  | NewerReferenceExt NewReferenceProperties -- DONE
+  | FunExt Creation  Module Index Uniq FreeVars -- TODO: Implement
+  | NewFunExt NewFunProperties -- TODO: Implement
+  | ExportExt Mfa -- DONE
+  | BitBinaryExt Bytes.Bytes -- DONE
+  | NewFloatExt Float -- DONE
+  | AtomUtf8Ext String -- DONE
+  | SmallAtomUtf8Ext String -- DONE
+  | AtomExt String -- DONE
+  | SmallAtomExt String -- DONE
 
-decode : D.Decoder Term
-decode = version |> D.andThen (\_ -> tag) |> D.andThen extractTerm
+fromBytes : Bytes.Bytes -> Result String Term
+fromBytes bin =
+  case Bytes.Decode.decode decode bin of
+    Just val -> Ok val
+    Nothing -> Err "Invalid Erlang term."
 
-version : D.Decoder Version
-version = D.map Version D.unsignedInt8
+decode : Decoder Term
+decode = version |> andThen (\_ -> tag) |> andThen extractTerm
 
-tag : D.Decoder Tag
-tag = D.unsignedInt8 |> D.andThen pickTag
+version : Decoder Version
+version = map Version unsignedInt8
 
-pickTag : Int -> D.Decoder Tag
+tag : Decoder Tag
+tag = unsignedInt8 |> andThen pickTag
+
+pickTag : Int -> Decoder Tag
 pickTag tag_ =
+  let _ = Debug.log "TAG" tag_ in
   case tag_ of
-    97 -> D.map SmallIntegerExt D.unsignedInt8
-    98 -> D.map IntegerExt (D.signedInt32 Bytes.BE)
-    70 -> D.map NewFloatExt (D.float64 Bytes.BE)
-    100 -> D.map AtomExt atomUtf8Ext
-    104 -> D.map SmallTupleExt (tupleExt D.unsignedInt8)
-    105 -> D.map LargeTupleExt (tupleExt (D.unsignedInt32 Bytes.BE))
-    106 -> D.succeed NilExt
-    107 -> D.map StringExt stringExt
-    108 -> D.map ListExt listExt
-    109 -> D.map BinaryExt binaryExt
-    110 -> D.map SmallBigExt (bigExt D.unsignedInt8)
-    111 -> D.map LargeBigExt (bigExt (D.unsignedInt32 Bytes.BE))
-    115 -> D.map SmallAtomExt smallAtomUtf8Ext
-    116 -> D.map MapExt mapExt
-    118 -> D.map AtomUtf8Ext atomUtf8Ext
-    119 -> D.map SmallAtomUtf8Ext smallAtomUtf8Ext
-    _ -> D.fail
+    77 -> map BitBinaryExt bitBinaryExt
+    88 -> map NewPidExt newPidExt
+    89 -> map NewPortExt newPortExt
+    90 -> map NewerReferenceExt newerReferenceExt
+    97 -> map SmallIntegerExt smallIntegerExt
+    98 -> map IntegerExt integerExt
+    70 -> map NewFloatExt newFloatExt
+    100 -> map AtomExt atomExt
+    101 -> map ReferenceExt referenceExt
+    102 -> map PortExt portExt
+    103 -> map PidExt pidExt
+    104 -> map SmallTupleExt smallTupleExt
+    105 -> map LargeTupleExt largeTupleExt
+    106 -> succeed NilExt
+    107 -> map StringExt stringExt
+    108 -> map ListExt listExt
+    109 -> map BinaryExt binaryExt
+    110 -> map SmallBigExt smallBigExt
+    111 -> map LargeBigExt largeBigExt
+    112 -> map NewFunExt newFunExt
+    113 -> map ExportExt exportExt
+    114 -> map NewReferenceExt newReferenceExt
+    115 -> map SmallAtomExt smallAtomExt
+    116 -> map MapExt mapExt
+    118 -> map AtomUtf8Ext atomUtf8Ext
+    119 -> map SmallAtomUtf8Ext smallAtomUtf8Ext
+    _ -> fail
 
-extractTerm : Tag -> D.Decoder Term
+extractTerm : Tag -> Decoder Term
 extractTerm tag_ =
+  let _ = Debug.log "DECODED TAG" tag_ in
   case tag_ of
-    SmallIntegerExt integer -> D.succeed (Integer integer)
-    IntegerExt integer -> D.succeed (Integer integer)
-    NewFloatExt float -> D.succeed (FloatingPoint float)
-    AtomExt atom -> D.succeed (Atom atom)
-    SmallTupleExt elements -> D.succeed (Tuple elements)
-    LargeTupleExt elements -> D.succeed (Tuple elements)
-    MapExt pairs -> D.succeed (Map pairs)
-    NilExt -> D.succeed Nil
-    StringExt string -> D.succeed (CharList string)
-    ListExt elements -> D.succeed (ProperList elements)
-    BinaryExt binary -> D.succeed (Binary binary)
-    SmallBigExt bigInteger -> D.succeed (Integer bigInteger)
-    LargeBigExt bigInteger -> D.succeed (Integer bigInteger)
-    SmallAtomExt atom -> D.succeed (Atom atom)
-    AtomUtf8Ext atom -> D.succeed (Atom atom)
-    SmallAtomUtf8Ext atom -> D.succeed (Atom atom)
-    PidExt _ id serial creation -> D.succeed (Pid (id, serial, creation))
-    NewPidExt _ id serial creation -> D.succeed (Pid (id, serial, creation))
+    SmallIntegerExt integer -> succeed (Integer integer)
+    IntegerExt integer -> succeed (Integer integer)
+    PortExt portProperties -> succeed (Port portProperties)
+    NewPortExt portProperties -> succeed (Port portProperties)
+    PidExt pidProperties -> succeed (Pid pidProperties)
+    NewPidExt pidProperties -> succeed (Pid pidProperties)
+    SmallTupleExt elements -> succeed (Tuple elements)
+    LargeTupleExt elements -> succeed (Tuple elements)
+    MapExt pairs -> succeed (Map pairs)
+    NilExt -> succeed Nil
+    StringExt integers -> succeed (ProperList integers)
+    ListExt elements -> intoListTerm elements
+    BinaryExt binary -> succeed (Binary binary)
+    SmallBigExt bigInteger -> succeed (Integer bigInteger)
+    LargeBigExt bigInteger -> succeed (Integer bigInteger)
+    NewReferenceExt properties -> succeed (NewReference properties)
+    NewerReferenceExt properties -> succeed (NewReference properties)
+    ExportExt mfa -> succeed (Export mfa)
+    BitBinaryExt bitstring -> succeed (Binary bitstring)
+    NewFloatExt floatingPoint -> succeed (FloatingPoint floatingPoint)
+    AtomUtf8Ext atom -> succeed (Atom atom)
+    SmallAtomUtf8Ext atom -> succeed (Atom atom)
+    AtomExt atom -> succeed (Atom atom)
+    SmallAtomExt atom -> succeed (Atom atom)
+    _ -> fail
 
-stringExt : D.Decoder String
-stringExt = D.unsignedInt16 (Bytes.BE) |> D.andThen D.string
+extractString : Tag -> Decoder String
+extractString tag_ =
+  case tag_ of
+    AtomUtf8Ext atom -> succeed atom
+    SmallAtomUtf8Ext atom -> succeed atom
+    AtomExt atom -> succeed atom
+    SmallAtomExt atom -> succeed atom
+    BinaryExt bin ->
+      case Bytes.Decode.decode (string (Bytes.width bin)) bin of
+        Just str -> succeed str
+        Nothing -> fail
+    _ -> fail
 
-binaryExt : D.Decoder Bytes.Bytes
-binaryExt = D.unsignedInt32 (Bytes.BE) |> D.andThen D.bytes
 
-listExt : D.Decoder Elements
-listExt =
+extractAtom : Tag -> Decoder String
+extractAtom tag_ =
+  case tag_ of
+    AtomUtf8Ext atom -> succeed atom
+    SmallAtomUtf8Ext atom -> succeed atom
+    AtomExt atom -> succeed atom
+    SmallAtomExt atom -> succeed atom
+    _ -> fail
+
+extractInt : Tag -> Decoder Int
+extractInt tag_ =
+  case tag_ of
+    SmallIntegerExt int_ -> succeed int_
+    IntegerExt int_ -> succeed int_
+    _ -> fail
+
+intoListTerm : Elements -> Decoder Term
+intoListTerm elements =
+  case last elements of
+    Just t ->
+      case t of
+        Nil ->
+          let
+              len = List.length elements
+              finalList = List.take (len - 1) elements
+          in
+          succeed (ProperList finalList)
+        _ ->
+          succeed (ImproperList elements t)
+    Nothing ->
+      succeed (ProperList elements)
+
+smallIntegerExt : Decoder Int
+smallIntegerExt = unsignedInt8
+
+integerExt : Decoder Int
+integerExt = signedInt32 Bytes.BE
+
+newFloatExt : Decoder Float
+newFloatExt = float64 Bytes.BE
+
+stringExt : Decoder Elements
+stringExt =
   Bytes.BE
-  |> D.unsignedInt32
-  |> D.andThen (\len -> D.loop (len, []) (listStep decode))
+  |> unsignedInt16
+  |> andThen (\len -> loop (len, []) (stringStep ()))
 
-listStep :
-  D.Decoder Term
-  -> (Int, Elements)
-  -> D.Decoder (D.Step (Int, Elements) (Elements))
-listStep decoder (len, list) =
-  let _ = Debug.log "LENGTH OF LIST" len in
-  if len <= 0 then
-    let _ = Debug.log "GOING TO FINISH" True in
-    D.succeed (D.Done list)
+type alias StringStepState = (Int, Elements)
+
+stringStep : () -> StringStepState -> Decoder (Step StringStepState Elements)
+stringStep _ (len, list) =
+  if len == 0 then
+    succeed (Done (List.reverse list))
   else
-    let _ = Debug.log "GOING TO CONTINUE" True in
-    D.map (\elem ->
-      let _ = Debug.log "ELEMENT" elem in
-      D.Loop (len - 1, elem :: list)
-    ) decoder
+    map
+      (\elem -> Loop (len - 1, (Integer elem) :: list))
+      (unsignedInt8)
 
-tupleExt : D.Decoder Int -> D.Decoder Elements
-tupleExt lengthDecoder =
-  lengthDecoder
-  |> D.andThen (\len -> D.loop (len, []) (listStep decode))
+binaryExt : Decoder Bytes.Bytes
+binaryExt =
+  let
+      len = unsignedInt32 Bytes.BE
+      data = \len_ -> bytes len_
+  in
+  len |> andThen data
 
-mapExt : D.Decoder Pairs
-mapExt =
-  Bytes.BE
-  |> D.unsignedInt32
-  |> D.andThen (\arity -> D.loop (arity, []) (mapStep decode))
+bitBinaryExt : Decoder Bytes.Bytes
+bitBinaryExt =
+  let
+      len = unsignedInt32 Bytes.BE
+      trailingBits = unsignedInt8
+      data = \len_ -> bytes len_
+  in
+  len |> andThen (\len_ -> trailingBits |> andThen (\_ -> (data len_)))
 
-mapStep :
-  D.Decoder Term
-  -> (Int, Pairs)
-  -> D.Decoder (D.Step (Int, Pairs) (Pairs))
-mapStep decoder (arity, pairs) =
-  if arity <= 0 then
-    D.succeed (D.Done pairs)
+node : Decoder Node
+node = tag |> andThen extractAtom
+
+id : Decoder Id
+id = unsignedInt32 Bytes.BE
+
+serial : Decoder Serial
+serial = unsignedInt32 Bytes.BE
+
+module_ : Decoder Module
+module_ = tag |> andThen extractAtom
+
+function : Decoder Function
+function = tag |> andThen extractAtom
+
+arity : Decoder Arity
+arity = unsignedInt8
+
+functionArity : Decoder Arity
+functionArity = tag |> andThen extractInt
+
+index : Decoder Index
+index = unsignedInt32 (Bytes.BE)
+
+oldIndex : Decoder OldIndex
+oldIndex = tag |> andThen extractInt
+
+uniq : Decoder Uniq
+uniq = bytes 16
+
+oldUniq : Decoder OldUniq
+oldUniq = tag |> andThen extractInt
+
+numFree : Decoder Int
+numFree = unsignedInt32 (Bytes.BE)
+
+smallCreation : Decoder Creation
+smallCreation = unsignedInt8
+
+bigCreation : Decoder Creation
+bigCreation = unsignedInt32 Bytes.BE
+
+pidExt : Decoder PidProperties
+pidExt = map4 PidProperties node id serial smallCreation
+
+newPidExt : Decoder PidProperties
+newPidExt = map4 PidProperties node id serial bigCreation
+
+portExt : Decoder PortProperties
+portExt = map3 PortProperties node id smallCreation
+
+newPortExt : Decoder PortProperties
+newPortExt = map3 PortProperties node id bigCreation
+
+referenceExt : Decoder ReferenceProperties
+referenceExt = map3 ReferenceProperties node id smallCreation
+
+newReferenceExt : Decoder NewReferenceProperties
+newReferenceExt =
+  let len = unsignedInt16 Bytes.BE in
+  len |> andThen (\len_ ->
+    map3 NewReferenceProperties node smallCreation (ids len_)
+  )
+
+newerReferenceExt : Decoder NewReferenceProperties
+newerReferenceExt =
+  let len = unsignedInt16 Bytes.BE in
+  len |> andThen (\len_ ->
+    map3 NewReferenceProperties node bigCreation (ids len_)
+  )
+
+ids : Int -> Decoder (List Id)
+ids len = loop (len, []) (idStep id)
+
+type alias IdsStepState = (Int, List Id)
+type alias IdsStepDecoder =
+  (IdsStepState -> Decoder (Step IdsStepState (List Id)))
+
+idStep : Decoder Id -> IdsStepDecoder
+idStep decoder (len_, ids_) =
+  if len_ <= 0 then
+    succeed (Done (List.reverse ids_))
   else
-    D.map2
-      (\key value -> D.Loop (arity - 1, (key, value) :: pairs))
-      decoder
-      decoder
+    map (\id_ -> Loop (len_ - 1, id_ :: ids_)) decoder
 
-bigExt : D.Decoder Int -> D.Decoder Int
-bigExt lengthDecoder =
-  lengthDecoder -- Docs don't mention size if is signed or unsigned int
-  |> D.andThen (\len ->
-    D.signedInt8
-    |> D.andThen (\sign ->
-        D.loop ((len, (toSign sign), 0), 0) (bigStep D.unsignedInt8)
+newFunExt : Decoder NewFunProperties
+newFunExt =
+  let size = unsignedInt32 (Bytes.BE) in
+  size |> andThen (\size_ ->
+    let _ = Debug.log "SIZE" size_ in
+    arity |> andThen (\arity_ ->
+      let _ = Debug.log "ARITY" arity_ in
+      uniq |> andThen (\uniq_ ->
+        let _ = Debug.log "UNIQ" uniq_ in
+        index |> andThen (\index_ ->
+          let _ = Debug.log "INDEX" index_ in
+          numFree |> andThen (\numFree_ ->
+            let _ = Debug.log "NUM FREE" numFree_ in
+            module_ |> andThen (\mod_ ->
+              let _ = Debug.log "MODULE" mod_ in
+              oldIndex |> andThen (\oldIndex_ ->
+                let _ = Debug.log "OLD INDEX" oldIndex_ in
+                oldUniq |> andThen (\oldUniq_ ->
+                  let _ = Debug.log "OLD UNIQ" oldUniq_ in
+                  pidExt |> andThen (\pid_ ->
+                    let _ = Debug.log "PID" pid_ in
+                    freeVars (numFree_) |> andThen (\freeVars_ ->
+                      let _ = Debug.log "FREE VARS" freeVars_ in
+                      succeed (NewFunProperties
+                        mod_
+                        arity_
+                        pid_
+                        freeVars_
+                        index_
+                        uniq_
+                        oldIndex_
+                        oldUniq_
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
     )
   )
 
+type alias FreeVarsStepState = (Int, FreeVars)
+type alias FreeVarsStepDecoder =
+  (FreeVarsStepState -> Decoder (Step FreeVarsStepState FreeVars))
+
+freeVars : Int -> Decoder FreeVars
+freeVars count = loop (count, []) (freeVarsStep decode)
+
+freeVarsStep : Decoder Term -> FreeVarsStepDecoder
+freeVarsStep decoder (count, list) =
+  let _ = Debug.log "STEP" True in
+  if count <= 0 then
+    succeed (Done (List.reverse list))
+  else
+    map (\freeVar -> Loop (count - 1, freeVar :: list)) decoder
+
+exportExt : Decoder Mfa
+exportExt = map3 Mfa module_ function functionArity
+
+listExt : Decoder Elements
+listExt =
+  Bytes.BE
+  |> unsignedInt32
+  |> andThen (\len -> loop (len, []) (listStep decode))
+
+type alias ListStepState = (Int, Elements)
+
+listStep :
+  Decoder Term -> ListStepState -> Decoder (Step ListStepState (Elements))
+listStep decoder (len, list) =
+  if len < 0 then
+    succeed (Done (List.reverse list))
+  else if len == 0 then
+    map
+      (\tail -> Loop (len - 1, tail :: list))
+      (tag |> andThen (\tag_ -> extractTerm tag_))
+  else
+    map
+      (\elem -> Loop (len - 1, elem :: list))
+      (tag |> andThen (\tag_ -> extractTerm tag_))
+
+smallTupleExt : Decoder Elements
+smallTupleExt =
+  unsignedInt8 |> andThen (\len -> loop (len, []) (tupleStep decode))
+
+largeTupleExt : Decoder Elements
+largeTupleExt =
+  Bytes.BE
+  |> unsignedInt32
+  |> andThen (\len -> loop (len, []) (tupleStep decode))
+
+type alias TupleStepState = (Int, Elements)
+
+tupleStep :
+  Decoder Term -> TupleStepState -> Decoder (Step TupleStepState (Elements))
+tupleStep decoder (len, list) =
+  if len == 0 then
+    succeed (Done (List.reverse list))
+  else
+    map
+      (\elem -> Loop (len - 1, elem :: list))
+      (tag |> andThen (\tag_ -> extractTerm tag_))
+
+mapExt : Decoder Pairs
+mapExt =
+  Bytes.BE
+  |> unsignedInt32
+  |> andThen (\arity_ -> loop (arity_, Dict.empty) (mapStep decode))
+
+type alias MapStepState = (Int, Pairs)
+
+mapStep :
+  Decoder Term -> MapStepState -> Decoder (Step MapStepState (Pairs))
+mapStep decoder (arity_, pairs) =
+  if arity_ <= 0 then
+    succeed (Done pairs)
+  else
+    map2
+      (\key value -> Loop (arity_ - 1, Dict.insert key value pairs))
+      (tag |> andThen (\tag_ -> extractString tag_))
+      (tag |> andThen (\tag_ -> extractTerm tag_))
+
+smallBigExt : Decoder Int
+smallBigExt = bigExt unsignedInt8
+
+largeBigExt : Decoder Int
+largeBigExt = bigExt (unsignedInt32 Bytes.BE)
+
+bigExt : Decoder Int -> Decoder Int
+bigExt len =
+  len
+  |> bigExtLenAndSign
+  |> andThen (\(len_, sign_) ->
+    let state = (len_, sign_, 0) in
+    loop (state, 0) (bigStep unsignedInt8)
+  )
+
+bigExtLenAndSign : Decoder Int -> Decoder (Int, Sign)
+bigExtLenAndSign len =
+  map2 (\len_ sign_ -> Tuple.pair len_ (toSign sign_)) len signedInt8
+
 bigStep :
-  D.Decoder Int
+  Decoder Int
   -> ((Int, Sign, Int), Int)
-  -> D.Decoder (D.Step ((Int, Sign, Int), Int) Int)
+  -> Decoder (Step ((Int, Sign, Int), Int) Int)
 bigStep decoder ((len, sign, currentIteration), result) =
   if currentIteration == (len) then
-    D.succeed (D.Done (negateBasedOnSign sign result))
+    succeed (Done (negateBasedOnSign sign result))
   else
-    D.map (\digit ->
+    map (\digit ->
       let newResult = digit * 256^currentIteration + result in
-      D.Loop ((len, sign, currentIteration + 1), newResult)
+      Loop ((len, sign, currentIteration + 1), newResult)
     )
     decoder
 
@@ -184,14 +529,26 @@ negateBasedOnSign sign integer =
     Negative -> negate integer
 
 toSign : Int -> Sign
-toSign int = if int == 0 then Positive else Negative
+toSign int_ = if int_ == 0 then Positive else Negative
 
-atomUtf8Ext : D.Decoder String
-atomUtf8Ext = D.unsignedInt16 (Bytes.BE) |> D.andThen extractAtom
+atomUtf8Ext : Decoder String
+atomUtf8Ext = Bytes.BE |> unsignedInt16 |> andThen intoString
 
-smallAtomUtf8Ext : D.Decoder String
-smallAtomUtf8Ext = D.unsignedInt8 |> D.andThen extractAtom
+smallAtomUtf8Ext : Decoder String
+smallAtomUtf8Ext = unsignedInt8 |> andThen intoString
 
-extractAtom : Int -> D.Decoder String
-extractAtom len = D.string len
+atomExt : Decoder String
+atomExt  = Bytes.BE |> unsignedInt16 |> andThen intoString
 
+smallAtomExt : Decoder String
+smallAtomExt = unsignedInt8 |> andThen intoString
+
+intoString : Int -> Decoder String
+intoString len = string len
+
+last : List a -> Maybe a
+last list_ =
+  case list_ of
+    [] -> Nothing
+    [e] -> Just e
+    _ :: rem -> last rem
