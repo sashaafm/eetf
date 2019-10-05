@@ -130,7 +130,6 @@ tag = unsignedInt8 |> andThen pickTag
 
 pickTag : Int -> Decoder Tag
 pickTag tag_ =
-  let _ = Debug.log "TAG" tag_ in
   case tag_ of
     77 -> map BitBinaryExt bitBinaryExt
     88 -> map NewPidExt newPidExt
@@ -162,7 +161,6 @@ pickTag tag_ =
 
 extractTerm : Tag -> Decoder Term
 extractTerm tag_ =
-  let _ = Debug.log "DECODED TAG" tag_ in
   case tag_ of
     SmallIntegerExt integer -> succeed (Integer integer)
     IntegerExt integer -> succeed (Integer integer)
@@ -368,25 +366,15 @@ newFunExt : Decoder NewFunProperties
 newFunExt =
   let size = unsignedInt32 (Bytes.BE) in
   size |> andThen (\size_ ->
-    let _ = Debug.log "SIZE" size_ in
     arity |> andThen (\arity_ ->
-      let _ = Debug.log "ARITY" arity_ in
       uniq |> andThen (\uniq_ ->
-        let _ = Debug.log "UNIQ" uniq_ in
         index |> andThen (\index_ ->
-          let _ = Debug.log "INDEX" index_ in
           numFree |> andThen (\numFree_ ->
-            let _ = Debug.log "NUM FREE" numFree_ in
             module_ |> andThen (\mod_ ->
-              let _ = Debug.log "MODULE" mod_ in
               oldIndex |> andThen (\oldIndex_ ->
-                let _ = Debug.log "OLD INDEX" oldIndex_ in
                 oldUniq |> andThen (\oldUniq_ ->
-                  let _ = Debug.log "OLD UNIQ" oldUniq_ in
                   pidExt |> andThen (\pid_ ->
-                    let _ = Debug.log "PID" pid_ in
                     freeVars (numFree_) |> andThen (\freeVars_ ->
-                      let _ = Debug.log "FREE VARS" freeVars_ in
                       succeed (NewFunProperties
                         mod_
                         arity_
@@ -417,7 +405,6 @@ freeVars count = loop (count, []) (freeVarsStep decode)
 
 freeVarsStep : Decoder Term -> FreeVarsStepDecoder
 freeVarsStep decoder (count, list) =
-  let _ = Debug.log "STEP" True in
   if count <= 0 then
     succeed (Done (List.reverse list))
   else

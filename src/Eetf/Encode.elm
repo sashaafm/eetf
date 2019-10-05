@@ -14,6 +14,22 @@ module Eetf.Encode exposing
   , tuple3
   )
 
+{-| Turns Elm values into Erlang External Term Format (ETF) values. Check out
+the official [documentation][docs] to better understand how this library and the
+Erlang side work.
+
+[docs]: http://erlang.org/doc/apps/erts/erl_ext_dist.html
+
+# Encoding
+@docs encode, Value
+
+# Primitives
+@docs string, int, float, bool
+
+# Data Structures
+@docs list, array, set, dict, tuple, tuple2, tuple3
+-}
+
 import Array exposing (Array)
 import Bytes exposing (Bytes)
 import Bytes.Encode as E exposing (..)
@@ -21,6 +37,8 @@ import Dict exposing (Dict)
 import Eetf
 import Set exposing (Set)
 
+{-| Represents an External Term Format value.
+-}
 type alias Value = Eetf.Term
 
 {-| Convert a `Value` into a `Bytes` sequence.
@@ -446,14 +464,7 @@ isRepresentableInInt32 : Int -> Bool
 isRepresentableInInt32 i = i >= int32Min && i <= int32Max
 
 isRepresentableInSmallBig : Int -> Bool
-isRepresentableInSmallBig i =
-  let
-      _ = Debug.log "INT IS" i
-      _ = Debug.log "MIN IS" smallBigMin
-      _ = Debug.log "MAX IS" smallBigMax
-      _ = Debug.log "BOOL IS" (i >= smallBigMin && i <= smallBigMax)
-  in
-  i >= smallBigMin && i <= smallBigMax
+isRepresentableInSmallBig i = i >= smallBigMin && i <= smallBigMax
 
 bigExtSign : Int -> Encoder
 bigExtSign i = if i >= 0 then unsignedInt8 0 else unsignedInt8 1

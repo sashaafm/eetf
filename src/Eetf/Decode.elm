@@ -33,14 +33,56 @@ module Eetf.Decode exposing
   , tuple3
   )
 
+{-| Turn Erlang External Term Format (ETF) values into Elm values. Check out the
+official [documentation][docs] to better understand how this library and the
+Erlang side work.
+
+[docs]: http://erlang.org/doc/apps/erts/erl_ext_dist.html
+
+# Primitives
+@docs Decoder, string, bool, int, float
+
+# Data structures
+@docs list, array, dict, keyValuePairs, tuple, tuple2, tuple3
+
+# Object Primitives
+@docs field, at, index
+
+# Incosistent Structure
+@docs maybe, oneOf
+
+# Run Decoders
+@docs decodeBytes, decodeValue, Value, Error
+
+# Mapping
+
+@docs map, map2, map3, map4, map5, map6, map7, map8
+
+# Fancy Decoding
+@docs succeed, fail, andThen
+-}
+
 import Array exposing (Array)
 import Bytes exposing (Bytes)
 import Bytes.Decode
 import Dict exposing (Dict)
 import Eetf exposing (Term(..))
 
+{-| A value that knows how to decode ETF values.
+
+This whole API is similar to `elm/json`. Maybe check the section about decoders
+in `guide.elm-lang.org` to better undestand how to use this module.
+-}
 type Decoder a = Decoder (Value -> Result Error a)
+
+{-| Represents an External Term Format value.
+-}
 type alias Value = Term
+
+{-| A structured error describing exactly how the decoder failed. This is meant
+to help you understand and inform of the problem occurred during the decoding
+process.
+-}
 type Error
   = WrongType String
   | InvalidTupleSize String

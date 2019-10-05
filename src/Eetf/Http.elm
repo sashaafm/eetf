@@ -2,11 +2,36 @@ module Eetf.Http exposing
   ( expectTerm
   )
 
+{-| Receive HTTP responses in Erlang's External Term Format.
+
+# Expect
+@docs expectTerm
+-}
+
 import Bytes.Decode
 import Http
 import Eetf.Decode exposing (Decoder)
 
-{-| Expect the response body to be an Erlang term.
+{-| Expect the response body to be an Erlang term encoded in the External Term
+Format. This function is meant to be used like the `expectString` or
+`expectJson` functions in the `elm/http` package:
+
+    import Eetf.Decode
+    import Eetf.Http
+    import Http
+
+    type Msg
+      = GotText (Result Http.Error String)
+
+    getRandomText : Cmd Msg
+    getRandomText =
+      Http.get
+        { url = "https://example.com/texts/123"
+        , expect = Eetf.Http.expectTerm GotText Eetf.Decode.string
+        }
+
+The response is a sequence of bytes encoded in the External Term Format, but in
+this case we expect it to be encoded text that can be turned into a `String`.
 -}
 expectTerm : (Result Http.Error a -> msg) -> Decoder a -> Http.Expect msg
 expectTerm toMsg decoder =
