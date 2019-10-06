@@ -8,6 +8,7 @@ module Eetf.Encode exposing
   , int
   , list
   , set
+  , object
   , string
   , tuple
   , tuple2
@@ -27,7 +28,7 @@ Erlang side work.
 @docs string, int, float, bool
 
 # Data Structures
-@docs list, array, set, dict, tuple, tuple2, tuple3
+@docs list, array, set, dict, object, tuple, tuple2, tuple3
 -}
 
 import Array exposing (Array)
@@ -91,6 +92,17 @@ dict keyFunc valueFunc dict_ =
   |> List.map (\(k, v) -> Tuple.pair (keyFunc k) (valueFunc v))
   |> Dict.fromList
   |> Eetf.Map
+
+{-| Turn a `List (String, Value)` into an Erlang `map` in External Term Format.
+
+This function exists to provide an API similar to the one in `elm/json` namely
+the `Json.Encode.object` function. To better undestand how to use it you can
+consult the `Json.Encode.object` documentation
+[here][https://package.elm-lang.org/packages/elm/json/latest/Json-Encode#object]
+.
+-}
+object : List (String, Value) -> Value
+object pairs = Eetf.Map (Dict.fromList pairs)
 
 {-| Turn a `Tuple` of arity 1 into an Erlang `tuple` of arity 1 in External Term
 Format.
