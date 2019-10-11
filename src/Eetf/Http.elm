@@ -60,6 +60,7 @@ extractReasonFromError error =
     Eetf.Decode.InvalidTupleSize reason -> reason
     Eetf.Decode.MapFieldNotFound reason -> reason
     Eetf.Decode.IndexOutOfBounds reason -> reason
+    Eetf.Decode.IndexLesserThanZero reason -> reason
     Eetf.Decode.NoMatchingDecoder reason -> reason
     Eetf.Decode.InvalidTerm reason -> reason
     Eetf.Decode.UnableToDecode reason -> reason

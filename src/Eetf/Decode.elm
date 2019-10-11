@@ -2,6 +2,7 @@ module Eetf.Decode exposing
   ( Decoder
   , Value
   , Error(..)
+  , andMap
   , andThen
   , at
   , array
@@ -26,11 +27,13 @@ module Eetf.Decode exposing
   , map8
   , maybe
   , oneOf
+  , record
   , string
   , succeed
   , tuple
   , tuple2
   , tuple3
+  , tupleN
   )
 
 {-| Turn Erlang External Term Format (ETF) values into Elm values. Check out the
@@ -43,7 +46,7 @@ Erlang side work.
 @docs Decoder, string, bool, int, float
 
 # Data structures
-@docs list, array, dict, keyValuePairs, tuple, tuple2, tuple3
+@docs list, array, dict, keyValuePairs, tuple, tuple2, tuple3, tupleN, record
 
 # Object Primitives
 @docs field, at, index
@@ -59,7 +62,7 @@ Erlang side work.
 @docs map, map2, map3, map4, map5, map6, map7, map8
 
 # Fancy Decoding
-@docs succeed, fail, andThen
+@docs succeed, fail, andThen, andMap
 -}
 
 import Array exposing (Array)
@@ -88,6 +91,7 @@ type Error
   | InvalidTupleSize String
   | MapFieldNotFound String
   | IndexOutOfBounds String
+  | IndexLesserThanZero String
   | NoMatchingDecoder String
   | UnableToDecode String
   | InvalidTerm String
@@ -201,6 +205,33 @@ tuple3 decoderA decoderB decoderC =
       _ ->
         Err (WrongType "Not a tuple.")
 
+{-| Decode an Erlang tuple, requiring a particular index.
+-}
+tupleN : Int -> Decoder a -> Decoder a
+tupleN index_ decoder =
+  let
+      fetchIndexFromTuple = \elements ->
+        if index_ < 0 then
+          Err
+            (IndexLesserThanZero
+              ("Index " ++ (String.fromInt index_) ++ " < 0.")
+            )
+        else
+          let maybeElem = elements |> List.drop index_ |> List.head in
+          case maybeElem of
+            Just elem ->
+              decodeValue decoder elem
+            Nothing ->
+              Err
+                (IndexOutOfBounds
+                  ("Index " ++ (String.fromInt index_) ++ " is out of bounds.")
+                )
+  in
+  Decoder <| \term ->
+    case term of
+      Tuple elements -> fetchIndexFromTuple elements
+      _ -> Err (WrongType "Not a tuple.")
+
 {-| Decode an Erlang list into an Elm `List`.
 -}
 list : Decoder a -> Decoder (List a)
@@ -236,6 +267,32 @@ dict decoder =
   |> list
   |> andThen (\list_ ->
     succeed (Dict.fromList list_)
+  )
+
+{-| Decode[Erlang records][erl_recs] into [Elm records][elm_recs]. This function
+is meant to be used with the `andMap` function like so:
+
+    person =
+      record "person" Person
+      |> andMap (tupleN 1 string)
+      |> andMap (tupleN 2 int)
+
+Where the record on the Erlang side is:
+
+    -record(person, {name = "Robert", age = 64}).
+
+[erl_recs]: http://erlang.org/doc/reference_manual/records.html
+[elm_recs]: https://elm-lang.org/docs/records
+-}
+record : String -> (a -> b) -> Decoder (a -> b)
+record name func =
+  tupleN 0 string
+  |> andThen (\actualName ->
+    if actualName == name then
+      succeed func
+    else
+      fail <|
+        "Erlang record mismatch. Expected " ++ name ++  "but got " ++ actualName
   )
 
 {-| Decode an Erlang key-value pair list (usually called a `proplist` in Erlang,
@@ -311,6 +368,18 @@ andThen next decoder =
       Ok val -> decodeValue (next val) term
       Err err -> Err err
   )
+
+{-| Chain Decoders together to continually decode terms and mapping into a
+single value. Meant to be used alongside `record` to achieve something like
+this:
+
+    person =
+      record "person" Person
+      |> andMap (tupleN 1 string)
+      |> andMap (tupleN 2 int)
+-}
+andMap : Decoder a -> Decoder (a -> c) -> Decoder c
+andMap = map2 (|>)
 
 {-| Helpful for dealing with optional fields.
 -}
